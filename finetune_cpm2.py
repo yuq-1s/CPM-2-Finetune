@@ -19,6 +19,8 @@
 USE_TORCH_DDP = False
 
 import os
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:21'
+assert os.environ['PYTORCH_CUDA_ALLOC_CONF'] == 'max_split_size_mb:21'
 import torch
 import json
 import shutil
@@ -35,7 +37,8 @@ from utils import setup_model_and_optimizer, set_random_seed, initialize_distrib
 
 from samplers import DistributedBatchSampler, RandomSampler
 
-from CPM2Datasets import C3Dataset, LCQMCDataset, LCSTSDataset, MathDataset, AdGenDataset, CCPMDataset, CPM2Dataset, WMTENCNDataset
+from CPM2Datasets import (C3Dataset, LCQMCDataset, LCSTSDataset, MSRADataset,
+    MathDataset, AdGenDataset, CCPMDataset, CPM2Dataset, WMTENCNDataset)
 
 import torch.nn.functional as F
 
@@ -636,6 +639,12 @@ def main():
         },
         "math": {
             "dataset": MathDataset,
+            "eval_func": evaluate_gen,
+            "eval_metric": acc_metric,
+            "cache_path": None,
+        },
+        "msra": {
+            "dataset": MSRADataset,
             "eval_func": evaluate_gen,
             "eval_metric": acc_metric,
             "cache_path": None,

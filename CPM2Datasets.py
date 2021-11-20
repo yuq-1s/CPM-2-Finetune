@@ -8,6 +8,7 @@ from tokenization_enc_dec import EncDecTokenizer
 import pickle
 import mpu
 import math
+from tqdm import tqdm
 from utils import print_rank_0, save_rank_0
 
 class CPM2Dataset(Dataset):
@@ -327,6 +328,72 @@ class LCQMCDataset(CPM2Dataset):
 
         return data, max_enc_len, max_dec_len
 
+class MSRADataset(CPM2Dataset):
+    def __init__(self, args, tokenizer: EncDecTokenizer, path, split, ratio=1, num=-1, prefix=None, add_target_post=True, cache_path=None, do_infer=False, prompt_config=None):
+        super(MSRADataset, self).__init__(args, tokenizer, path, split, ratio, num, prefix, add_target_post, cache_path, do_infer, prompt_config)
+
+    def _do_process(self, record):
+        buffer = []
+        assert len(record['tokens']) == len(record['ner_tags'])
+        for ch, tag in zip(record['tokens'], record['ner_tags']):
+            assert tag in range(7)
+            try:
+                assert not buffer or buffer[0][1] in [1, 3, 5]
+            except AssertionError:
+                import pdb; pdb.set_trace()
+            if buffer and tag == 0:
+                yield buffer
+                buffer = []
+            elif buffer and tag == buffer[0][1] + 1:
+                buffer.append((ch, tag))
+            elif buffer:
+                yield buffer
+                buffer = [(ch, tag)]
+            elif tag in [1, 3, 5]:
+                buffer = [(ch, tag)]
+            elif tag == 0:
+                pass
+            else:
+                raise ValueError(f"{(ch, tag)} invalid when buffer is {buffer}")
+
+    def _process(self, records):
+        tag2sentinal = {1: self.tokenizer.get_sentinel_id(181),
+                        3: self.tokenizer.get_sentinel_id(183),
+                        5: self.tokenizer.get_sentinel_id(185)}
+        total, failed = 0, 0
+        pbar = tqdm(records, desc="MSRA")
+        for idx, record in enumerate(pbar):
+            total += 1
+            try:
+                source = [self.tokenizer.encoder[x] for x in record['tokens']]
+            except KeyError:
+                failed += 1
+                continue
+            target = [1, self.tokenizer.get_sentinel_id(0)]
+            for pairs in self._do_process(record):
+                target.extend([self.tokenizer.encoder[x[0]] for x in pairs])
+                target.append(tag2sentinal[pairs[0][1]])
+            if self.add_target_post:
+                target.append(self.tokenizer.get_sentinel_id(1))
+            yield {
+                "idx": idx,
+                "enc_input_ids": source,
+                "dec_input_ids": target[:-1],
+                "label_ids": target[1:]
+            }
+            pbar.set_description(f"MSRA failed ({failed:05d}/{total:05d})")
+
+    def process_data(self):
+        assert not self.prompt_config
+        # from datasets import load_dataset
+        # msra = load_dataset('msra_ner')
+        import pickle
+        with open('data/msra/msra_ner.pkl', 'rb') as f:
+            msra = pickle.load(f)
+        data = list(self._process(list(msra['train']) + list(msra['test'])))
+        max_enc_len = max(len(x['enc_input_ids']) for x in data)
+        max_dec_len = max(len(x['dec_input_ids']) for x in data)
+        return data, max_enc_len, max_dec_len
 
 class MathDataset(CPM2Dataset):
     def __init__(self, args, tokenizer: EncDecTokenizer, path, split, ratio=1, num=-1, prefix=None, add_target_post=True, cache_path=None, do_infer=False, prompt_config=None):
